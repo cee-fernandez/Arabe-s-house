@@ -1,0 +1,471 @@
+=====================================================================
+EX-2026-06193195 -- Factibilidad de agua potable
+Inmueble en Las Compuertas, Lujan de Cuyo -- Analisis espacial DIRCAS
+Salidas crudas de la ejecucion de salida/consultas_trias.sql
+=====================================================================
+Fecha de ejecucion : 2026-09-10
+Via de ejecucion   : servidor MCP dircas_postgis (solo lectura), una
+                     sentencia por llamada
+Esquema            : produccion
+Datos de conexion  : NO se registran en este archivo (repositorio publico).
+                     Host / puerto / base / usuario / clave los resuelve
+                     internamente el servidor MCP.
+Sentencias         : solo SET / WITH / SELECT. No se ejecuto ningun
+                     INSERT / UPDATE / DELETE / CREATE / DROP, ni se
+                     creo ninguna tabla (tampoco temporal).
+
+---------------------------------------------------------------------
+AJUSTES APLICADOS AL SCRIPT (autorizados en el paso 4 del encargo)
+---------------------------------------------------------------------
+El Paso 1 revelo que los nombres de campo tanteados en el script no
+existen. Se re-corrieron las consultas con los campos reales:
+
+  (1) Diametro AySAM : el script probaba
+                       diametro / diam / dn / diametro_mm /
+                       diametro_nominal / dn_mm
+                       -> el campo real es  a_diam_nom  (numeric)
+  (2) Material AySAM : el script probaba  material / mat / material_ca
+                       -> el campo real es  a_material  (varchar)
+  (3) Tabla operadores: el script consultaba  produccion.operadores
+                       -> esa tabla NO EXISTE. Las tablas reales son
+                          produccion.operador_redes_dircas (id_operador,
+                          operador, op, n_depto, operador_id) y
+                          produccion.operador_redes (heredada).
+  (4) Paso 6b        : la tabla produccion.redes NO tiene campos de texto
+                       con el nombre del operador -- usa claves foraneas
+                       enteras (id_op, id_diam, id_mat, id_estado,
+                       id_servicio). El filtro por texto
+                       (atrib::text !~* 'aysam') no discriminaba nada.
+                       Se reemplazo por JOIN contra las tablas de
+                       nomenclatura, que resuelve el nombre del operador
+                       de forma explicita.
+  (5) Paso 5         : se agregaron los JOIN de nomenclatura para
+                       resolver operador / clasificacion / jerarquia /
+                       tipo / servicio, que en la tabla son ids enteros.
+
+Consultas adicionales incorporadas (no estaban en el script original):
+  (6) Discriminacion por el campo  funcion : el tramo mas proximo en
+      terminos absolutos es un ACUEDUCTO DE TRANSPORTE, no una red
+      distribuidora. Se separo la busqueda por
+      funcion = 'TRAMOS DISTRIBUCION', que es la red efectivamente
+      conectable y la que corresponde cotejar con el informe de AySAM.
+  (7) Control de georreferenciacion : centroide reproyectado a EPSG:4326
+      para confirmar que el poligono cae en Las Compuertas. Se hizo
+      porque toda la discrepancia de distancia depende de que la parcela
+      este bien ubicada.
+  (8) Extension de la interseccion con  areas_dircas , para caracterizar
+      la superposicion del 7,64 %.
+
+=====================================================================
+SET default_transaction_read_only = on;
+=====================================================================
+(Query executed, no rows returned)
+
+=====================================================================
+PASO 1 -- Estructura de las tablas
+=====================================================================
+
+--- 1a. Tablas presentes en el esquema produccion ---------------------
+table_name
+areas_dircas
+redes
+redes_aysam_agua_20260527
+redes_aysam_agua_20260907
+
+>>> OBSERVACION: 'operadores' NO figura. Ver ajuste (3).
+
+--- 1b. Columnas (excluidas geometry/geography) -----------------------
+table_name,pos,column_name,data_type
+areas_dircas,1,gid,integer
+areas_dircas,3,id_op,integer
+areas_dircas,4,id_clasi,integer
+areas_dircas,6,area_m2,double precision
+areas_dircas,7,respons,character varying
+areas_dircas,8,fecha,timestamp without time zone
+areas_dircas,9,id_jer,integer
+areas_dircas,10,n_depto,character varying
+areas_dircas,11,id_servicio,integer
+areas_dircas,12,zona_id,integer
+areas_dircas,13,id_tipo,integer
+redes,1,gid,integer
+redes,3,id_op,integer
+redes,4,id_mat,integer
+redes,5,id_diam,integer
+redes,6,id_estado,integer
+redes,8,long_m,numeric
+redes,9,respons,character varying
+redes,10,fecha,timestamp without time zone
+redes,11,n_depto,character varying
+redes,12,id_servicio,integer
+redes,13,red_id,integer
+redes,14,area_gid,integer
+redes_aysam_agua_20260527,1,ogc_fid,integer
+redes_aysam_agua_20260527,3,fid,numeric
+redes_aysam_agua_20260527,4,mslink,double precision
+redes_aysam_agua_20260527,5,funcion,character varying
+redes_aysam_agua_20260527,6,a_diam_nom,double precision
+redes_aysam_agua_20260527,7,a_estado,character varying
+redes_aysam_agua_20260527,8,a_material,character varying
+redes_aysam_agua_20260907,1,ogc_fid,integer
+redes_aysam_agua_20260907,3,fid,double precision
+redes_aysam_agua_20260907,4,mslink,numeric
+redes_aysam_agua_20260907,5,funcion,character varying
+redes_aysam_agua_20260907,6,a_diam_nom,numeric
+redes_aysam_agua_20260907,7,a_longitud,numeric
+redes_aysam_agua_20260907,8,a_estado,character varying
+redes_aysam_agua_20260907,9,a_material,character varying
+
+>>> OBSERVACION: la posicion 2 falta en todas las tablas: es la columna
+    de geometria (geom), excluida por el filtro udt_name.
+>>> La version 20260907 agrega la columna  a_longitud , inexistente en
+    la 20260527.
+
+--- 1c. Columnas de geometria declaradas -----------------------------
+f_table_name,f_geometry_column,srid,type
+areas_dircas,geom,22182,MULTIPOLYGON
+pozos_dircas,geom,22172,POINT
+redes,geom,22182,MULTILINESTRING
+redes_aysam_agua_20260527,geom,22182,LINESTRING
+redes_aysam_agua_20260907,geom,22182,MULTILINESTRING
+
+--- 1d. (agregada) Tablas de nomenclatura disponibles ----------------
+table_schema,table_name
+produccion,clasificacion_areas_dircas
+produccion,diametro_redes
+produccion,diametro_redes_dircas
+produccion,estado
+produccion,estado_redes
+produccion,estado_redes_dircas
+produccion,jerarquia_areas_dircas
+produccion,jerarquia_red
+produccion,material_red
+produccion,material_redes
+produccion,material_redes_dircas
+produccion,operador_redes
+produccion,operador_redes_dircas
+produccion,servicio_redes_areas
+produccion,tipo_area_dircas
+produccion,tipo_obra_arte
+
+--- 1e. (agregada) Columnas de las tablas de nomenclatura ------------
+table_name,pos,column_name,data_type
+clasificacion_areas_dircas,1,id_clasi,integer
+clasificacion_areas_dircas,2,clasificacion,text
+diametro_redes,1,gid,integer
+diametro_redes,2,id_diametro,numeric
+diametro_redes,3,diametro,numeric
+diametro_redes_dircas,1,id_diametro,integer
+diametro_redes_dircas,2,diametro,integer
+estado_redes_dircas,1,id_estado,integer
+estado_redes_dircas,2,estado,text
+jerarquia_areas_dircas,1,id_jer,integer
+jerarquia_areas_dircas,2,jerarquia,text
+material_red,1,gid,integer
+material_red,2,id_material,numeric
+material_red,3,material,character varying
+material_redes,1,gid,integer
+material_redes,2,id_material,numeric
+material_redes,3,material,character varying
+material_redes_dircas,1,id_material,integer
+material_redes_dircas,2,material,text
+operador_redes,1,gid,integer
+operador_redes,2,id_operador,numeric
+operador_redes,3,operador,character varying
+operador_redes,4,id_departamento,numeric
+operador_redes_dircas,1,id_operador,integer
+operador_redes_dircas,2,operador,text
+operador_redes_dircas,4,n_depto,character varying
+operador_redes_dircas,5,op,text
+operador_redes_dircas,6,operador_id,integer
+servicio_redes_areas,1,gid,integer
+servicio_redes_areas,2,id_servicio,numeric
+servicio_redes_areas,3,servicio,character varying
+tipo_area_dircas,1,id_tipo,integer
+tipo_area_dircas,2,tipo,text
+
+=====================================================================
+PASO 2 -- Control de superficie de la parcela
+=====================================================================
+area_m2,area_ha,perimetro_m,valida,n_vertices,centroide_22182,dif_vs_esperado_m2
+83550.09,8.3550,1572.35,True,8,POINT(2503484.33062592 6346584.2917219),1.09
+
+>>> CONTROL SUPERADO. Coincide con el valor previamente verificado.
+    n_vertices = 8 incluye el vertice de cierre (7 vertices distintos).
+    Diferencia vs. plano de mensura (83.549 m2): +1,09 m2 = 0,0013 %.
+
+--- 2b. (agregada) Control de georreferenciacion (EPSG:4326) ---------
+centroide_wgs84,lon,lat
+POINT(-68.9627057906553 -33.0237390659788),-68.962706,-33.023739
+
+>>> El centroide cae en Las Compuertas, Lujan de Cuyo. Georreferenciacion
+    del poligono CONFIRMADA: la discrepancia de distancia que se detecta
+    mas abajo no se explica por un error de ubicacion de la parcela.
+
+=====================================================================
+PASO 3 -- Red AySAM agua VIGENTE (20260907)
+=====================================================================
+
+--- 3a. 10 tramos mas proximos (radio 1000 m) ------------------------
+    [campos de diametro/material ajustados a a_diam_nom / a_material]
+dist_m,dn_mm,material,atributos_completos
+20.45,350,HIERRO FUNDIDO,{fid: 32285, mslink: 223774.0, funcion: TRAMOS ACUEDUCTO TRANSP, ogc_fid: 32285, a_estado: MALO, a_diam_nom: 350.0, a_longitud: 760.30, a_material: HIERRO FUNDIDO}
+28.55,850,HORMIGON ARMADO,{fid: 30966, mslink: 191294.0, funcion: TRAMOS ACUEDUCTO TRANSP, ogc_fid: 30966, a_estado: MALO, a_diam_nom: 850.0, a_longitud: 783.47, a_material: HORMIGON ARMADO}
+31.70,850,ACERO ACERO,{fid: 30967, mslink: 191295.0, funcion: TRAMOS ACUEDUCTO TRANSP, ogc_fid: 30967, a_estado: MALO, a_diam_nom: 850.0, a_longitud: 83.46, a_material: ACERO ACERO}
+32.98,800,HORMIGON ARMADO,{fid: 30968, mslink: 191296.0, funcion: TRAMOS ACUEDUCTO TRANSP, ogc_fid: 30968, a_estado: MALO, a_diam_nom: 800.0, a_longitud: 239.51, a_material: HORMIGON ARMADO}
+33.32,850,ACERO ACERO,{fid: 31011, mslink: 191297.0, funcion: TRAMOS ACUEDUCTO TRANSP, ogc_fid: 31011, a_estado: MALO, a_diam_nom: 850.0, a_longitud: 217.32, a_material: ACERO ACERO}
+63.81,350,HIERRO FUNDIDO,{fid: 30175, mslink: 7974.0, funcion: TRAMOS ACUEDUCTO TRANSP, ogc_fid: 30175, a_estado: MALO, a_diam_nom: 350.0, a_longitud: 9.37, a_material: HIERRO FUNDIDO}
+67.36,90,PVC K10,{fid: 30160, mslink: 1568.0, funcion: TRAMOS DISTRIBUCION, ogc_fid: 30160, a_estado: BUENO, a_diam_nom: 90.0, a_longitud: 88.69, a_material: PVC K10}
+67.36,90,PVC K10,{fid: 29504, mslink: 1569.0, funcion: TRAMOS DISTRIBUCION, ogc_fid: 29504, a_estado: BUENO, a_diam_nom: 90.0, a_longitud: 104.48, a_material: PVC K10}
+67.45,90,PVC K10,{fid: 31753, mslink: 1570.0, funcion: TRAMOS DISTRIBUCION, ogc_fid: 31753, a_estado: BUENO, a_diam_nom: 90.0, a_longitud: 68.11, a_material: PVC K10}
+70.34,160,PVC K10,{fid: 29557, mslink: 7525.0, funcion: TRAMOS DISTRIBUCION, ogc_fid: 29557, a_estado: BUENO, a_diam_nom: 160.0, a_longitud: 81.06, a_material: PVC K10}
+
+>>> LECTURA: los 6 tramos mas proximos son ACUEDUCTOS DE TRANSPORTE
+    (DN 350 a 850, estado MALO): infraestructura de transporte, no
+    conectable para un servicio domiciliario. La primera red
+    DISTRIBUIDORA aparece a 67,36 m: DN 90, PVC K10, estado BUENO.
+
+--- 3b. Tramo mas proximo con DN >= 90 (sin filtrar por funcion) ------
+dist_m,dn_mm,material,funcion,linea_distancia_22182,punto_parcela_mas_proximo,punto_red_mas_proximo,azimut_grados
+20.45,350,HIERRO FUNDIDO,TRAMOS ACUEDUCTO TRANSP,LINESTRING(2503071.02999998 6346510.81998035 | 2503062.31026939 6346529.31410649),POINT(2503071.02999998 6346510.81998035),POINT(2503062.31026939 6346529.31410649),334.8
+    atributos_completos: {fid: 32285, mslink: 223774.0, funcion: TRAMOS ACUEDUCTO TRANSP, ogc_fid: 32285, a_estado: MALO, a_diam_nom: 350.0, a_longitud: 760.30, a_material: HIERRO FUNDIDO}
+
+>>> Azimut 334,8 grados = NOROESTE, desde el vertice oeste de la parcela.
+
+--- 3c. (agregada) Tramos DISTRIBUIDORES con DN >= 90, 5 mas proximos -
+dist_m,dn_mm,material,estado,ogc_fid,azimut_grados,punto_red_mas_proximo
+67.36,90,PVC K10,BUENO,29504,180.4,POINT(2503434.04775069 6346440.97981808)
+67.36,90,PVC K10,BUENO,30160,180.4,POINT(2503434.04775069 6346440.97981808)
+67.45,90,PVC K10,BUENO,31753,180.4,POINT(2503329.56775069 6346441.59981808)
+70.34,160,PVC K10,BUENO,29557,246.3,POINT(2503006.62089424 6346482.54065945)
+80.35,90,PVC K10,BUENO,30159,180.4,POINT(2503552.39275069 6346427.17981808)
+
+    linea_distancia_22182 del primero (parcela -> red):
+      LINESTRING(2503434.5076571 6346508.33824632 | 2503434.04775069 6346440.97981808)
+
+>>> CLAVE: azimut 180,4 grados = franco SUR. La DIRECCION coincide con lo
+    informado por AySAM ("267 m al sur"); la DISTANCIA no (67,36 m contra
+    267 m). El arranque de la linea de distancia esta sobre el limite SUR
+    de la parcela (y = 6.346.508), lo que confirma la orientacion.
+
+--- 3d. (agregada) Geometria de los tramos DN>=90 distribuidores <300 m
+mslink,a_diam_nom,a_material,a_longitud,funcion,dist_m,largo_m,rumbo_tramo
+1569,90,PVC K10,104.48,TRAMOS DISTRIBUCION,67.36,104.48,90.3
+1568,90,PVC K10,88.69,TRAMOS DISTRIBUCION,67.36,88.69,317.0
+1570,90,PVC K10,68.11,TRAMOS DISTRIBUCION,67.45,68.11,55.2
+7525,160,PVC K10,81.06,TRAMOS DISTRIBUCION,70.34,81.06,156.3
+1565,90,PVC K10,77.14,TRAMOS DISTRIBUCION,80.35,77.14,48.6
+7518,160,PVC K10,7.39,TRAMOS DISTRIBUCION,94.09,7.39,131.7
+7739,90,PVC K10,4.00,TRAMOS DISTRIBUCION,94.09,4.00,62.1
+7740,90,PVC K10,3.88,TRAMOS DISTRIBUCION,95.31,3.88,91.3
+
+    geometrias (EPSG:22182):
+      1569: LINESTRING(2503329.56775069 6346441.59981808 | 2503434.04775069 6346440.97981808)
+      1568: LINESTRING(2503494.55275069 6346376.13981808 | 2503434.04775069 6346440.97981808)
+      1570: LINESTRING(2503273.61275069 6346402.75981808 | 2503329.56775069 6346441.59981808)
+      7525: LINESTRING(2502999.15782374 6346499.53858166 | 2503031.74391736 6346425.32035141)
+      1565: LINESTRING(2503494.55275069 6346376.13981808 | 2503552.39275069 6346427.17981808)
+      7518: LINESTRING(2503031.74391736 6346425.32035141 | 2503037.26725069 6346420.40701808)
+      7739: LINESTRING(2503028.20725069 6346423.44701808 | 2503031.74391736 6346425.32035141)
+      7740: LINESTRING(2503037.26725069 6346420.40701808 | 2503041.14725069 6346420.31701808)
+
+>>> LECTURA: rumbos de tramo dispares (90, 317, 55, 48, 156 grados) y
+    longitudes cortas (4 a 105 m). No es un troncal recto de calle sino
+    una red interna de barrio, en zigzag, al sur de la parcela. Esto es
+    relevante para interpretar los 267 m de traza vial de AySAM: un
+    recorrido en L o en U sobre esa red puede sumar 267 m aunque la
+    separacion en linea recta sea de solo 67 m.
+
+=====================================================================
+PASO 4 -- Red AySAM agua ANTERIOR (20260527) y comparacion
+=====================================================================
+
+--- 4a. 10 tramos mas proximos (radio 1000 m) ------------------------
+    (funcion viene con relleno de espacios a la derecha en esta version)
+dist_m,dn_mm,material,mslink,ogc_fid,fid,funcion,a_estado
+20.45,350,HIERRO FUNDIDO,223774,45769,45772,TRAMOS ACUEDUCTO TRANSP,MALO
+28.55,850,HORMIGON ARMADO,191294,32886,32887,TRAMOS ACUEDUCTO TRANSP,MALO
+31.70,850,ACERO ACERO,191295,32887,32888,TRAMOS ACUEDUCTO TRANSP,MALO
+32.98,800,HORMIGON ARMADO,191296,32888,32889,TRAMOS ACUEDUCTO TRANSP,MALO
+33.32,850,ACERO ACERO,191297,32988,32989,TRAMOS ACUEDUCTO TRANSP,MALO
+63.81,350,HIERRO FUNDIDO,7974,14344,14345,TRAMOS ACUEDUCTO TRANSP,MALO
+67.36,90,PVC K10,1568,14297,14298,TRAMOS DISTRIBUCION,BUENO
+67.36,90,PVC K10,1569,1401,1401,TRAMOS DISTRIBUCION,BUENO
+67.45,90,PVC K10,1570,37240,37241,TRAMOS DISTRIBUCION,BUENO
+70.34,160,PVC K10,7525,1533,1533,TRAMOS DISTRIBUCION,BUENO
+
+--- 4b. Comparacion entre versiones (radio 1000 m) -------------------
+version,tramos_en_1000m,dist_min_m,dist_min_dn90_m,dist_min_dn90_distrib_m,dn_del_mas_cercano,mslink_del_mas_cercano
+20260907,53,20.45,20.45,67.36,350,223774
+20260527,53,20.45,20.45,67.36,350,223774
+
+>>> SIN CAMBIOS RELEVANTES entre versiones:
+    - igual cantidad de tramos en 1000 m (53 y 53)
+    - identicas distancias en los 10 mas proximos (20.45 / 28.55 / 31.70
+      / 32.98 / 33.32 / 63.81 / 67.36 / 67.36 / 67.45 / 70.34)
+    - identicos DN, materiales y estados
+    - identico  mslink  (identificador estable de origen AySAM):
+      223774 el mas cercano; 1568 / 1569 / 1570 los DN 90 distribuidores
+    Lo unico que cambia:
+    - ogc_fid y fid (claves subrogadas, se renumeran en cada recarga:
+      p.ej. el mismo tramo mslink 223774 pasa de ogc_fid 45769 a 32285).
+      NO deben usarse como identificador entre versiones -- usar mslink.
+    - la version nueva agrega la columna  a_longitud
+    - la version nueva normaliza  funcion  (elimina el relleno de
+      espacios a la derecha)
+    - el tipo geometrico declarado pasa de LINESTRING a MULTILINESTRING
+
+=====================================================================
+PASO 5 -- areas_dircas en radio 3000 m
+=====================================================================
+    [con JOIN de nomenclatura -- ver ajuste (5)]
+dist_m,superpone,sup_superpuesta_m2,pct_de_la_parcela,area_poligono_m2,operador,clasificacion,jerarquia,tipo,servicio,gid,id_op,zona_id,n_depto,fecha
+0.00,True,6386.12,7.64,23602318.30,AYSAM SAPEM,AGUA_POTABLE,OPERADOR,AREA y SERVICIO,AGUA,212,149,224,06,2026-07-08T12:19:06
+1777.82,False,0.00,0.00,2011961.74,MUNICIPALIDAD DE LUJAN AGUA,AGUA_POTABLE_Y_CLOACA,OPERADOR MUNICIPAL,AREA,AGUA Y CLOACA,167,124,165,06,2026-05-14T11:57:18
+2453.07,False,0.00,0.00,653978.26,AYSAM SAPEM,AGUA_POTABLE_Y_CLOACA,OPERADOR,AREA y SERVICIO,AGUA,194,149,217,01,2025-11-28T23:45:16
+2811.12,False,0.00,0.00,50526064.83,MUNICIPALIDAD DE LUJAN AGUA,AGUA_POTABLE_Y_CLOACA,OPERADOR MUNICIPAL,AREA,AGUA Y CLOACA,166,124,165,06,2026-07-08T12:07:23
+
+>>> El unico area que superpone la parcela es de AYSAM SAPEM (gid 212).
+    No hay superposicion con areas de operadores DIRCAS distintos de
+    AySAM. La mas proxima de esas es MUNICIPALIDAD DE LUJAN AGUA, a
+    1.777,82 m, sin superposicion.
+
+--- 5b. (agregada) Extension de la interseccion con el area gid 212 ---
+sup_intersec_m2,x_min_int,x_max_int,x_min_parcela,x_max_parcela,y_min_int,y_max_int
+6386.12,2503071.03,2503548.18,2503071.03,2503796.42,6346510.60,6346720.59
+
+>>> CUIDADO: el "ancho medio" de 13,4 m que surge de dividir la superficie
+    por la extension E-O del bounding box ESTA MAL CALCULADO. El limite
+    norte de la parcela corre en diagonal (azimut 65,7), asi que el box es
+    grande en los dos ejes aunque la franja sea fina: dividir por el lado
+    del box subestima el largo real y sobreestima el ancho. El valor
+    correcto sale de 2*A/P -- ver 5c. Se deja el dato del box porque sirve
+    para ubicar la franja, no para medirla.
+
+--- 5c. (agregada, 2a pasada) Superposicion real o desfase? ------------
+vertices_franja,area_m2,ancho_medio_m,compacidad,subsiste_a_6m,subsiste_a_10m
+5,6386.12,12.22,0.0734,369.2,0.0
+
+azimut_parcela,azimut_area,desvio_grados,largo_limite_m,offset_oeste_m,offset_medio_m,offset_este_m
+65.742,65.603,0.138,510.57,13.96,12.80,12.19
+
+    Erosion completa (ST_Buffer con distancia negativa):
+      -1 m  -> 5347.7 m2
+      -3 m  -> 3313.6 m2
+      -6 m  ->  369.2 m2
+      -10 m ->    0.0 m2
+      -15 m ->    0.0 m2
+      -25 m ->    0.0 m2
+
+    Geometria de la interseccion (EPSG:22182):
+      POLYGON((2503548.17699571 6346712.49625843,
+               2503103.03734122 6346510.60144227,
+               2503071.02999998 6346510.81998035,   <- vertice V1 de la parcela
+               2503536.51999998 6346720.58998035,   <- vertice V2 de la parcela
+               2503548.17699571 6346712.49625843))
+
+    Borde del area gid 212 en las inmediaciones (simplificado 0,2 m):
+      L1: (2503712.12702083 6346786.85642798 | 2503080.06959584 6346500.18433231 |
+           2503114.74279513 6346452.17528713 | 2503103.09308817 6346390.59826459)
+      L2: (2503206.85082895 6346389.88983283 | 2503226.76390054 6346476.17980972 |
+           2503437.47026546 6346478.8469789  | 2503672.18115297 6346396.16473443 |
+           2503666.22981021 6346386.75330868)
+      L3: (2502956.21720558 6346543.73764584 | 2503582.55464622 6346831.31990918)
+
+>>> VEREDICTO: DESFASE DE DIGITALIZACION, no superposicion sustantiva.
+    Razones, en orden de peso:
+    1) La franja es UN SOLO cuadrilatero de 4 vertices distintos, y DOS de
+       ellos son los vertices propios del limite norte de la parcela (V1 y
+       V2). Es decir: un lado de la franja ES el limite del inmueble, y el
+       lado opuesto es un unico segmento recto del borde del area.
+    2) Los dos limites son PARALELOS con 0,138 grados de desvio a lo largo
+       de 510,57 m (azimut 65,742 contra 65,603).
+    3) El offset perpendicular se mantiene casi rigido: 13,96 m en el
+       vertice oeste, 12,80 m en el medio, 12,19 m en el este. Deriva de
+       1,77 m en mas de medio kilometro.
+    4) Ancho medio real 12,22 m y compacidad 0,0734 (un circulo da 1):
+       filiforme. Erosionada desaparece antes de los 10 m de radio, o sea
+       que en ningun punto pasa de unos 20 m de ancho.
+
+    Dos limites determinados de forma independiente no coinciden en
+    direccion con esa precision a lo largo de esa distancia ni conservan un
+    corrimiento constante. Es la MISMA LINEA capturada dos veces, con un
+    desplazamiento sistematico del orden de 13 m.
+
+    Causas descartadas:
+    - Datum / transformacion 22172 -> 22182: su orden es centimetrico,
+      tres ordenes de magnitud por debajo de los 13 m observados.
+    - Rasgo material que justificara un limite real en esa posicion: ver
+      5d, no hay cauces de riego en 400 m.
+
+    CONSECUENCIA PARA EL INFORME: corresponde consignar que el inmueble
+    LINDA con el limite del area de servicio registrada de AySAM, no que
+    este parcialmente comprendido en ella. La incertidumbre posicional del
+    poligono de area (unos 13 m) es mayor que la franja misma, por lo que
+    el 7,64 % NO debe trasladarse al informe como superficie servida.
+
+    PENDIENTE OPERATIVO (no de este expediente): el borde del area gid 212
+    tiene un corrimiento sistematico de ~13 m en este sector. Conviene
+    redigitalizarlo contra la linea catastral.
+
+--- 5d. (agregada, 2a pasada) Cauces de riego en 400 m ----------------
+gid,codcau,cauce,dist_a_parcela_m,azimut,largo_m
+(0 filas)
+
+>>> Ningun cauce de la red de riego en 400 m del centro de la parcela.
+    Nota de calidad de datos: produccion.red_de_riego contiene geometrias
+    con coordenadas NaN, que hacen fallar to_jsonb con el error
+    "invalid input syntax for type json / Token nan is invalid". Hay que
+    filtrar por ST_IsValid / NOT ST_IsEmpty y seleccionar columnas
+    explicitas en lugar de serializar la fila completa.
+
+--- Nota sobre la version de PostGIS ----------------------------------
+    El servidor corre PostGIS 3.0.0 sobre PostgreSQL 12.22. La funcion
+    ST_MaximumInscribedCircle, que da el ancho maximo de un poligono en un
+    solo paso, requiere PostGIS >= 3.1 y NO esta disponible: de ahi el uso
+    de la erosion por buffer negativo como sustituto.
+
+=====================================================================
+PASO 6 -- Operadores DIRCAS en el entorno
+=====================================================================
+
+--- 6a. Tabla de operadores -- ver ajuste (3) -------------------------
+    produccion.operadores NO EXISTE.
+    Se consulto produccion.operador_redes_dircas.
+
+total_operadores,en_lujan_depto06
+163,9
+
+    Operadores de Lujan de Cuyo (n_depto = '06') mas AySAM:
+id_operador,operador,op,n_depto,operador_id
+118,ASOCIACION VECINAL VILLA EL CARRIZAL,ASOCIACION VECINAL VILLA EL CARRIZAL,06,
+149,AYSAM SAPEM,AYSAM SAPEM,01,
+154,CONJUNTO HABITACIONAL LA CAPILLA,CONJUNTO HABITACIONAL LA CAPILLA,06,
+119,DIRECCION GENERAL DE HIDRAULICA,DIRECCION GENERAL DE HIDRAULICA,06,
+124,MUNICIPALIDAD DE LUJAN AGUA,MUNICIPALIDAD DE LUJAN (Agua),06,
+125,MUNICIPALIDAD DE LUJAN CLOACA,MUNICIPALIDAD DE LUJAN (Cloaca),06,
+120,UNION VECINAL CORAL CARRIZAL,UNION VECINAL CORAL CARRIZAL,06,
+121,UNION VECINAL NUESTRA SENORA DEL ROSARIO,UNION VECINAL NUESTRA SENORA DEL ROSARIO,06,
+122,UNION VECINAL PUEBLO UNIDAD,UNION VECINAL PUEBLO UNIDAD,06,
+123,VECINOS AUTOCONVOCADOS (EX. UNION VECINAL LAS CARDITAS),VECINOS AUTOCONVOCADOS (Ex Las Carditas),06,
+
+>>> La FK de union es  operador_redes_dircas.id_operador , contra
+    redes.id_op  y  areas_dircas.id_op .
+
+--- 6b. produccion.redes -- tramos en radio 1500 m -------------------
+    [filtro por texto reemplazado por JOIN de nomenclatura, ajuste (4)]
+dist_m,operador,dn_mm,material,estado,servicio,long_m,n_depto
+(0 filas)
+
+>>> RESULTADO: NINGUN tramo de red de operadores DIRCAS en 1.500 m.
+
+--- 6c. (agregada) Redes DIRCAS por operador, radio ampliado a 3000 m -
+operador,tramos,dist_min_m,dist_max_m
+MUNICIPALIDAD DE LUJAN AGUA,9,2853.31,2978.74
+
+>>> Aun ampliando el radio a 3.000 m, el unico operador DIRCAS con
+    infraestructura de red es MUNICIPALIDAD DE LUJAN AGUA, a 2.853,31 m
+    (9 tramos). Muy lejos del inmueble.
+
+=====================================================================
+FIN DE LAS SALIDAS
+=====================================================================
