@@ -34,7 +34,7 @@
 | 7 | Tramo más próximo con DN ≥ 90 — distancia | **20,45 m** sin filtrar por función; **67,36 m** exigiendo `funcion = 'TRAMOS DISTRIBUCIÓN'` (el tramo efectivamente conectable) | ídem, `ST_ShortestLine` |
 | 8 | Cambios respecto de la versión 2026-05-27 | **Ninguno relevante.** Ambas versiones devuelven los **mismos 53 tramos** en 1.000 m, con **idénticas** distancias (20,45 / 28,55 / 31,70 / 32,98 / 33,32 / 63,81 / 67,36 / 67,36 / 67,45 / 70,34 m), diámetros, materiales, estados y el mismo `mslink`. Sólo cambian: las claves subrogadas `ogc_fid`/`fid` (se renumeran en cada recarga — **no usar para comparar versiones**), el agregado de la columna `a_longitud`, la normalización del campo `funcion` (se quitó el relleno de espacios) y el tipo geométrico declarado (`LINESTRING` → `MULTILINESTRING`) | `redes_aysam_agua_20260527` vs. `_20260907` |
 | 9 | **Superposición con `areas_dircas`** | **Sí**, con un **único** polígono: `gid` 212, `zona_id` 224 — operador **AYSAM SAPEM** (`id_operador` 149), clasificación `AGUA_POTABLE`, jerarquía `OPERADOR`, tipo `AREA y SERVICIO`. **No hay superposición con áreas de operadores distintos de AySAM** | `areas_dircas`, radio 3.000 m |
-| 10 | Superficie superpuesta | **6.386,12 m² (7,64 % de la parcela)** — franja angosta de ~13,4 m de ancho medio sobre el borde norte/noroeste, a lo largo de 477,15 m de los 725,39 m de desarrollo E-O. Ver la salvedad en §B.2 | `ST_Intersection` |
+| 10 | Superficie superpuesta | **6.386,12 m² (7,64 % de la parcela)** — pero **verificado como desfase de digitalización, no como superposición sustantiva**: franja de **12,22 m de ancho medio** a lo largo de los 510,57 m del límite norte. Los dos límites son paralelos con **0,138° de desvío** y offset perpendicular casi rígido (13,96 m al oeste → 12,19 m al este). Ver §B.2 y §E.9 | `ST_Intersection`, control de paralelismo con `ST_Azimuth` |
 | 11 | **Operadores DIRCAS en el entorno** (radio 1.500 m) | **Ninguno** — cero tramos de red de operadores registrados en DIRCAS. Ampliado el radio a 3.000 m, el único es **MUNICIPALIDAD DE LUJÁN (Agua)** con 9 tramos a **2.853,31 m** | `redes` ⋈ `operador_redes_dircas` |
 | 12 | Área de operador no-AySAM más próxima | **MUNICIPALIDAD DE LUJÁN (Agua)** a **1.777,82 m**, sin superposición | `areas_dircas` |
 | 13 | Control de georreferenciación *(agregado)* | **Superado** — centroide en **lon −68,962706 / lat −33,023739** (EPSG:4326), que cae en Las Compuertas, Luján de Cuyo | `ST_Transform(geom, 4326)` |
@@ -106,15 +106,33 @@ medidos por Calle Pública (traza vial).
 > operadores distintos de AySAM**: la más próxima de ellas corresponde a
 > MUNICIPALIDAD DE LUJÁN (Agua), a 1.777,82 m del inmueble.
 >
-> *Salvedad sobre el 7,64 %.* La intersección se extiende 477,15 m en dirección
-> este-oeste —sobre los 725,39 m de desarrollo de la parcela— y suma sólo
-> 6.386,12 m², lo que arroja un **ancho medio del orden de 13,4 m**. Se trata,
-> por tanto, de una **franja angosta sobre el borde norte/noroeste**, compatible
-> con que el límite del polígono de área de AySAM corra prácticamente sobre el
-> límite norte de la parcela con un desfase de digitalización de pocos metros, y
-> **no** con una inclusión sustantiva del inmueble dentro del área registrada. Se
-> recomienda confirmarlo visualmente en QGIS antes de asignarle efecto jurídico
-> al porcentaje.
+> *Salvedad sobre el 7,64 % — verificada geométricamente.* Esa superposición **no
+> constituye una inclusión del inmueble en el área registrada, sino un desfase de
+> digitalización del polígono de área**. La intersección es un **único
+> cuadrilátero de cuatro vértices**, de los cuales **dos son los vértices propios
+> del límite norte de la parcela**: uno de sus lados es literalmente ese límite, y
+> el opuesto es un único segmento recto del borde del área de AySAM. Cotejados
+> ambos, resultan **paralelos con 0,138° de desvío** —65,742° contra 65,603°— a lo
+> largo de **510,57 m**, con un **offset perpendicular casi rígido**: 13,96 m en el
+> vértice oeste, 12,80 m en el punto medio y 12,19 m en el vértice este, es decir
+> una deriva de 1,77 m en más de medio kilómetro. El ancho medio real de la franja
+> —superficie sobre semiperímetro— es de **12,22 m**, y su compacidad de 0,0734
+> (un círculo daría 1) la caracteriza como filiforme; erosionada, subsiste a 6 m y
+> desaparece a 10 m, de modo que en ningún punto excede los 20 m de ancho.
+>
+> Dos límites determinados de forma independiente no coinciden en dirección con
+> semejante precisión a lo largo de esa distancia, ni mantienen un corrimiento
+> constante: **se trata de la misma línea capturada dos veces, con un
+> desplazamiento sistemático del orden de 13 m**. Se descarta que el corrimiento
+> provenga de la transformación de coordenadas, cuyo orden es centimétrico (§E.1),
+> y no se registran cauces de la red de riego en 400 m que pudieran materializar un
+> corredor real en esa posición.
+>
+> En consecuencia, corresponde consignar que **el inmueble linda con el límite del
+> área de servicio registrada de AySAM**, y no que se encuentre parcialmente
+> comprendido en ella. La incertidumbre posicional del polígono de área —del orden
+> de 13 m— es mayor que la propia franja, por lo que **el 7,64 % no debe
+> trasladarse al informe como superficie servida**.
 
 **B.3 — Conclusión sobre la operadora del entorno**
 
@@ -192,13 +210,18 @@ proyectado ni la capacidad hidráulica disponible.
 
 - **Confirmado en base:** distancias, azimuts, diámetros, materiales, estados,
   geometrías, identificadores `mslink`, superposición con `areas_dircas`,
-  ausencia de operadores DIRCAS en 1.500 m, georreferenciación y superficie.
+  ausencia de operadores DIRCAS en 1.500 m, georreferenciación y superficie. **Se
+  suma el carácter de desfase de digitalización del 7,64 %**, verificado por
+  paralelismo (0,138° sobre 510,57 m) y constancia del offset perpendicular —ya no
+  es una conjetura sino una medición—.
 - **Extrapolado (razonamiento, no medición):** la interpretación del recorrido en
-  "L"/"U" que explicaría los 267 m; el carácter de "franja de digitalización" del
-  7,64 % de superposición.
+  "L"/"U" que explicaría los 267 m.
 - **No verificable con esta base:** la traza real de la extensión proyectada, la
-  capacidad hidráulica disponible del tramo DN 90, y la titularidad efectiva del
-  tramo a 67 m (consorcio cerrado o red pública).
+  capacidad hidráulica disponible del tramo DN 90, la titularidad efectiva del
+  tramo a 67 m (consorcio cerrado o red pública), y qué rasgo material define el
+  corredor por el que corren en paralelo el límite de la parcela, el borde del área
+  de AySAM y los acueductos —presumiblemente la traza vial—, ya que el esquema no
+  cuenta con capa de calles.
 
 ---
 
@@ -398,7 +421,32 @@ ogr2ogr -f GPKG -update -append ./salida/trias.gpkg \
    pasan la lista blanca del servidor. **Vía efectivamente utilizada el
    2026-09-10.**
 
-9. **Sólo lectura.** No se ejecutó `INSERT`, `UPDATE`, `DELETE`, `CREATE` ni
-   `DROP`, y no se creó ninguna tabla (tampoco temporal). Los parámetros de
-   conexión —host, puerto, base, usuario y clave— no se registran en este
-   repositorio, que es público.
+9. **Cómo se decide si una superposición es real o es desfase de digitalización.**
+   Una superficie superpuesta y su porcentaje no alcanzan para saberlo, y el
+   *bounding box* engaña cuando el límite corre en diagonal: dividir la superficie
+   por la extensión este-oeste —como se hizo en una primera versión de este
+   informe— subestima el largo real de la franja y sobreestima su ancho. El
+   procedimiento correcto, aplicado en §5b y §5c del script, es:
+
+   1. **Ancho medio** como superficie sobre semiperímetro (`2·A/P`), que no depende
+      de la orientación. Acá: 12,22 m.
+   2. **Compacidad** `4·π·A/P²`, que distingue una franja de un polígono macizo.
+      Acá: 0,0734 sobre 1 de un círculo.
+   3. **Ancho máximo** por erosión (`ST_Buffer` con distancia negativa creciente):
+      el radio al que el polígono desaparece acota el semiancho. Acá subsiste a 6 m
+      y desaparece a 10 m. En PostGIS ≥ 3.1 se resuelve directo con
+      `ST_MaximumInscribedCircle`; el servidor corre 3.0.0 y no la tiene.
+   4. **Paralelismo y constancia del offset**, que es la prueba decisiva: comparar
+      con `ST_Azimuth` la dirección del límite de la parcela y la del borde del
+      área, y medir la distancia perpendicular en varios puntos. Si son paralelos
+      dentro de fracciones de grado y el offset se mantiene, es la misma línea
+      capturada dos veces. Acá: 0,138° sobre 510,57 m, con offset de 13,96 m a
+      12,19 m.
+
+   Conviene además descartar el datum como causa (§E.1) y buscar un rasgo material
+   que pudiera justificar un límite real en esa posición —cauces, vías—.
+
+10. **Sólo lectura.** No se ejecutó `INSERT`, `UPDATE`, `DELETE`, `CREATE` ni
+    `DROP`, y no se creó ninguna tabla (tampoco temporal). Los parámetros de
+    conexión —host, puerto, base, usuario y clave— no se registran en este
+    repositorio, que es público.

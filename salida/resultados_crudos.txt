@@ -333,14 +333,96 @@ dist_m,superpone,sup_superpuesta_m2,pct_de_la_parcela,area_poligono_m2,operador,
 sup_intersec_m2,x_min_int,x_max_int,x_min_parcela,x_max_parcela,y_min_int,y_max_int
 6386.12,2503071.03,2503548.18,2503071.03,2503796.42,6346510.60,6346720.59
 
->>> La interseccion se extiende 477,15 m en direccion E-O (de un total de
-    725,39 m de la parcela) pero suma solo 6.386,12 m2: ancho medio de
-    unos 13,4 m. Es una FRANJA ANGOSTA sobre el borde norte/noroeste, no
-    una inclusion sustantiva. Compatible con que el limite del poligono
-    de area de AySAM corra practicamente sobre el limite norte de la
-    parcela, con un desfase de digitalizacion de pocos metros.
-    RECOMENDACION: confirmar visualmente en QGIS antes de darle peso
-    juridico a este 7,64 %.
+>>> CUIDADO: el "ancho medio" de 13,4 m que surge de dividir la superficie
+    por la extension E-O del bounding box ESTA MAL CALCULADO. El limite
+    norte de la parcela corre en diagonal (azimut 65,7), asi que el box es
+    grande en los dos ejes aunque la franja sea fina: dividir por el lado
+    del box subestima el largo real y sobreestima el ancho. El valor
+    correcto sale de 2*A/P -- ver 5c. Se deja el dato del box porque sirve
+    para ubicar la franja, no para medirla.
+
+--- 5c. (agregada, 2a pasada) Superposicion real o desfase? ------------
+vertices_franja,area_m2,ancho_medio_m,compacidad,subsiste_a_6m,subsiste_a_10m
+5,6386.12,12.22,0.0734,369.2,0.0
+
+azimut_parcela,azimut_area,desvio_grados,largo_limite_m,offset_oeste_m,offset_medio_m,offset_este_m
+65.742,65.603,0.138,510.57,13.96,12.80,12.19
+
+    Erosion completa (ST_Buffer con distancia negativa):
+      -1 m  -> 5347.7 m2
+      -3 m  -> 3313.6 m2
+      -6 m  ->  369.2 m2
+      -10 m ->    0.0 m2
+      -15 m ->    0.0 m2
+      -25 m ->    0.0 m2
+
+    Geometria de la interseccion (EPSG:22182):
+      POLYGON((2503548.17699571 6346712.49625843,
+               2503103.03734122 6346510.60144227,
+               2503071.02999998 6346510.81998035,   <- vertice V1 de la parcela
+               2503536.51999998 6346720.58998035,   <- vertice V2 de la parcela
+               2503548.17699571 6346712.49625843))
+
+    Borde del area gid 212 en las inmediaciones (simplificado 0,2 m):
+      L1: (2503712.12702083 6346786.85642798 | 2503080.06959584 6346500.18433231 |
+           2503114.74279513 6346452.17528713 | 2503103.09308817 6346390.59826459)
+      L2: (2503206.85082895 6346389.88983283 | 2503226.76390054 6346476.17980972 |
+           2503437.47026546 6346478.8469789  | 2503672.18115297 6346396.16473443 |
+           2503666.22981021 6346386.75330868)
+      L3: (2502956.21720558 6346543.73764584 | 2503582.55464622 6346831.31990918)
+
+>>> VEREDICTO: DESFASE DE DIGITALIZACION, no superposicion sustantiva.
+    Razones, en orden de peso:
+    1) La franja es UN SOLO cuadrilatero de 4 vertices distintos, y DOS de
+       ellos son los vertices propios del limite norte de la parcela (V1 y
+       V2). Es decir: un lado de la franja ES el limite del inmueble, y el
+       lado opuesto es un unico segmento recto del borde del area.
+    2) Los dos limites son PARALELOS con 0,138 grados de desvio a lo largo
+       de 510,57 m (azimut 65,742 contra 65,603).
+    3) El offset perpendicular se mantiene casi rigido: 13,96 m en el
+       vertice oeste, 12,80 m en el medio, 12,19 m en el este. Deriva de
+       1,77 m en mas de medio kilometro.
+    4) Ancho medio real 12,22 m y compacidad 0,0734 (un circulo da 1):
+       filiforme. Erosionada desaparece antes de los 10 m de radio, o sea
+       que en ningun punto pasa de unos 20 m de ancho.
+
+    Dos limites determinados de forma independiente no coinciden en
+    direccion con esa precision a lo largo de esa distancia ni conservan un
+    corrimiento constante. Es la MISMA LINEA capturada dos veces, con un
+    desplazamiento sistematico del orden de 13 m.
+
+    Causas descartadas:
+    - Datum / transformacion 22172 -> 22182: su orden es centimetrico,
+      tres ordenes de magnitud por debajo de los 13 m observados.
+    - Rasgo material que justificara un limite real en esa posicion: ver
+      5d, no hay cauces de riego en 400 m.
+
+    CONSECUENCIA PARA EL INFORME: corresponde consignar que el inmueble
+    LINDA con el limite del area de servicio registrada de AySAM, no que
+    este parcialmente comprendido en ella. La incertidumbre posicional del
+    poligono de area (unos 13 m) es mayor que la franja misma, por lo que
+    el 7,64 % NO debe trasladarse al informe como superficie servida.
+
+    PENDIENTE OPERATIVO (no de este expediente): el borde del area gid 212
+    tiene un corrimiento sistematico de ~13 m en este sector. Conviene
+    redigitalizarlo contra la linea catastral.
+
+--- 5d. (agregada, 2a pasada) Cauces de riego en 400 m ----------------
+gid,codcau,cauce,dist_a_parcela_m,azimut,largo_m
+(0 filas)
+
+>>> Ningun cauce de la red de riego en 400 m del centro de la parcela.
+    Nota de calidad de datos: produccion.red_de_riego contiene geometrias
+    con coordenadas NaN, que hacen fallar to_jsonb con el error
+    "invalid input syntax for type json / Token nan is invalid". Hay que
+    filtrar por ST_IsValid / NOT ST_IsEmpty y seleccionar columnas
+    explicitas en lugar de serializar la fila completa.
+
+--- Nota sobre la version de PostGIS ----------------------------------
+    El servidor corre PostGIS 3.0.0 sobre PostgreSQL 12.22. La funcion
+    ST_MaximumInscribedCircle, que da el ancho maximo de un poligono en un
+    solo paso, requiere PostGIS >= 3.1 y NO esta disponible: de ahi el uso
+    de la erosion por buffer negativo como sustituto.
 
 =====================================================================
 PASO 6 -- Operadores DIRCAS en el entorno

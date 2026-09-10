@@ -443,6 +443,103 @@ SELECT gid,
 FROM inter
 ORDER BY sup_intersec_m2 DESC;
 
+-- === 5c. Superposicion real o desfase de digitalizacion? ===
+--     AGREGADA en la revision del 2026-09-10 (segunda pasada).
+--     La 5b da la forma de la franja, pero no alcanza para decidir si el
+--     area realmente incluye parte del inmueble o si el poligono de area
+--     esta corrido. La prueba decisiva es el PARALELISMO: si el limite de
+--     la parcela y el borde del area son paralelos dentro de fracciones de
+--     grado y el offset perpendicular se mantiene constante, entonces es la
+--     misma linea capturada dos veces, no dos limites independientes.
+--
+--     Ojo con el bounding box: si el limite corre en diagonal, dividir la
+--     superficie por la extension E-O subestima el largo y sobreestima el
+--     ancho. Usar 2*A/P (ancho medio, independiente de la orientacion),
+--     4*pi*A/P^2 (compacidad) y la erosion por buffer negativo.
+--     En PostGIS >= 3.1 el ancho maximo sale directo con
+--     ST_MaximumInscribedCircle; este servidor corre 3.0.0 y no la tiene.
+--
+--     Corrida 2026-09-10 sobre el area gid 212:
+--       ancho medio 12,22 m / compacidad 0,0734 / subsiste a -6 m y
+--       desaparece a -10 m / azimut parcela 65,742 vs area 65,603
+--       -> desvio 0,138 grados sobre 510,57 m
+--       offset perpendicular 13,96 m (oeste) - 12,80 (medio) - 12,19 (este)
+--     Conclusion: DESFASE DE DIGITALIZACION de unos 13 m. El inmueble linda
+--     con el limite del area, no esta comprendido en ella.
+--
+--     Los dos vertices del limite norte de la parcela y los dos extremos
+--     del segmento de borde del area se leen de la 5b / del WKT de la
+--     interseccion; se cargan aca como literales para poder medir.
+WITH lim_parcela AS (
+  SELECT ST_SetSRID(ST_MakeLine(
+           ST_MakePoint(2503071.02999998, 6346510.81998035),
+           ST_MakePoint(2503536.51999998, 6346720.58998035)), 22182) AS g
+), lim_area AS (
+  SELECT ST_SetSRID(ST_MakeLine(
+           ST_MakePoint(2503080.06959584, 6346500.18433231),
+           ST_MakePoint(2503712.12702083, 6346786.85642798)), 22182) AS g
+), parcela AS (
+  SELECT ST_Transform(ST_GeomFromText(
+           'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
+           '2503621.25 6346661.76,2503668.68 6346675.42,'
+           '2503796.42 6346558.78,2503777.12 6346553.54,'
+           '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
+), inter AS (
+  SELECT ST_Intersection(a.geom, pa.geom) AS gi
+  FROM produccion.areas_dircas a, parcela pa
+  WHERE a.gid = 212
+)
+SELECT ST_NPoints(i.gi)                                           AS vertices_franja,
+       round(ST_Area(i.gi)::numeric, 2)                            AS area_m2,
+       round((ST_Area(i.gi)/(ST_Perimeter(i.gi)/2))::numeric, 2)   AS ancho_medio_m,
+       round((4*pi()*ST_Area(i.gi)/power(ST_Perimeter(i.gi),2))::numeric, 4)
+                                                                   AS compacidad,
+       round(ST_Area(ST_Buffer(i.gi,-6))::numeric, 1)              AS subsiste_a_6m,
+       round(ST_Area(ST_Buffer(i.gi,-10))::numeric, 1)             AS subsiste_a_10m,
+       round(degrees(ST_Azimuth(ST_StartPoint(p.g), ST_EndPoint(p.g)))::numeric, 3)
+                                                                   AS azimut_parcela,
+       round(degrees(ST_Azimuth(ST_StartPoint(l.g), ST_EndPoint(l.g)))::numeric, 3)
+                                                                   AS azimut_area,
+       round(abs(degrees(ST_Azimuth(ST_StartPoint(p.g), ST_EndPoint(p.g)))
+               - degrees(ST_Azimuth(ST_StartPoint(l.g), ST_EndPoint(l.g))))::numeric, 3)
+                                                                   AS desvio_grados,
+       round(ST_Length(p.g)::numeric, 2)                           AS largo_limite_m,
+       round(ST_Distance(ST_StartPoint(p.g), l.g)::numeric, 2)     AS offset_oeste_m,
+       round(ST_Distance(ST_LineInterpolatePoint(p.g,0.5), l.g)::numeric, 2)
+                                                                   AS offset_medio_m,
+       round(ST_Distance(ST_EndPoint(p.g), l.g)::numeric, 2)       AS offset_este_m
+FROM inter i, lim_parcela p, lim_area l;
+
+-- === 5d. Rasgo material que podria justificar un limite real ===
+--     AGREGADA en la revision. Si hubiera un cauce de riego en esa posicion,
+--     el limite del area podria ser real y no un corrimiento.
+--     OJO: red_de_riego tiene geometrias con coordenadas NaN, que hacen
+--     fallar to_jsonb con "Token nan is invalid". De ahi el filtro por
+--     ST_IsValid / NOT ST_IsEmpty y el select de columnas explicitas.
+--     Corrida 2026-09-10: 0 filas -- ningun cauce en 400 m.
+WITH centro AS (
+  SELECT ST_Transform(ST_GeomFromText('POINT(2503300 6346610)', 22172), 22182) AS g
+), parcela AS (
+  SELECT ST_Transform(ST_GeomFromText(
+           'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
+           '2503621.25 6346661.76,2503668.68 6346675.42,'
+           '2503796.42 6346558.78,2503777.12 6346553.54,'
+           '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
+), riego AS (
+  SELECT r.gid, r.codcau, r.cauce, ST_Transform(r.geom, 22182) AS g
+  FROM produccion.red_de_riego r, centro c
+  WHERE ST_IsValid(r.geom) AND NOT ST_IsEmpty(r.geom)
+    AND ST_Intersects(ST_Transform(r.geom, 22182), ST_Buffer(c.g, 400))
+)
+SELECT ri.gid, ri.codcau, ri.cauce,
+       round(ST_Distance(ri.g, pa.geom)::numeric, 2) AS dist_a_parcela_m,
+       round(degrees(ST_Azimuth(ST_StartPoint(ST_GeometryN(ri.g,1)),
+                                ST_EndPoint(ST_GeometryN(ri.g,1))))::numeric, 2) AS azimut,
+       round(ST_Length(ri.g)::numeric, 2) AS largo_m
+FROM riego ri, parcela pa
+ORDER BY dist_a_parcela_m
+LIMIT 10;
+
 -- ---------------------------------------------------------------------
 -- PASO 6 - redes de operadores DIRCAS en radio 1500 m
 --   6a: nomenclatura de operadores (para identificar la FK del join)
