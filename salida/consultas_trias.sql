@@ -17,6 +17,52 @@
 -- redundante ahi -- y ademas puede no persistir entre llamadas si el
 -- servidor no reutiliza la conexion. Es necesario en (a) y (b).
 -- =====================================================================
+--
+-- ---------------------------------------------------------------------
+-- REVISION 2026-09-10 -- campos reales relevados contra produccion
+-- ---------------------------------------------------------------------
+-- La version original de este script tanteaba varios nombres posibles
+-- para diametro y material sin certeza de cual era el real, y suponia la
+-- existencia de una tabla "operadores". Ejecutado el Paso 1 contra la
+-- base, los nombres verdaderos son:
+--
+--   redes_aysam_agua_*   diametro -> a_diam_nom   (numeric)
+--                        material -> a_material   (varchar)
+--                        estado   -> a_estado     (varchar)
+--                        funcion  -> funcion      (varchar)
+--                        id estable entre versiones -> mslink
+--
+--   produccion.operadores NO EXISTE. La nomenclatura real es
+--   produccion.operador_redes_dircas (id_operador, operador, op,
+--   n_depto, operador_id), y las tablas hermanas
+--   diametro_redes_dircas / material_redes_dircas /
+--   estado_redes_dircas / clasificacion_areas_dircas /
+--   jerarquia_areas_dircas / tipo_area_dircas / servicio_redes_areas.
+--
+--   produccion.redes y produccion.areas_dircas NO guardan el operador
+--   como texto sino como clave foranea entera (id_op). El filtro por
+--   texto del Paso 6b original (atrib::text !~* 'aysam') no discriminaba
+--   nada: se reemplazo por JOIN contra la nomenclatura.
+--
+-- Se agregaron ademas cuatro consultas que la version original no tenia
+-- y que resultaron necesarias (2b, 3c, 3d, 5b, 6c) -- ver los
+-- encabezados de cada una.
+--
+-- IMPORTANTE (hallazgo metodologico): el campo funcion distingue
+--   'TRAMOS ACUEDUCTO TRANSP'  acueductos de transporte, NO conectables
+--                              para un servicio domiciliario
+--   'TRAMOS DISTRIBUCION'      red distribuidora, la que si admite
+--                              conexion  (el valor real lleva tilde en
+--                              la O; se compara con ILIKE '...CI%' para
+--                              mantener este archivo en ASCII puro y no
+--                              depender de la codificacion del cliente)
+-- Sin ese filtro, el tramo "mas cercano" que devuelve el analisis es un
+-- acueducto DN 350 en estado malo, que no sirve para la factibilidad.
+-- Filtrar SIEMPRE por funcion en analisis de factibilidad.
+--
+-- Salidas de la corrida del 2026-09-10: resultados_crudos.txt
+-- Informe con los valores ya volcados:  resultados_trias.md
+-- ---------------------------------------------------------------------
 
 SET default_transaction_read_only = on;
 
@@ -28,7 +74,7 @@ SELECT table_name
 FROM information_schema.tables
 WHERE table_schema = 'produccion'
   AND table_name IN ('redes_aysam_agua_20260907','redes_aysam_agua_20260527',
-                     'areas_dircas','redes','operadores')
+                     'areas_dircas','redes','operador_redes_dircas')
 ORDER BY table_name;
 
 -- === 1b. Columnas (excluidas geometry/geography) ===
@@ -36,7 +82,7 @@ SELECT table_name, ordinal_position AS pos, column_name, data_type
 FROM information_schema.columns
 WHERE table_schema = 'produccion'
   AND table_name IN ('redes_aysam_agua_20260907','redes_aysam_agua_20260527',
-                     'areas_dircas','redes','operadores')
+                     'areas_dircas','redes','operador_redes_dircas')
   AND udt_name NOT IN ('geometry','geography')
 ORDER BY table_name, ordinal_position;
 
@@ -45,13 +91,39 @@ SELECT f_table_name, f_geometry_column, srid, type
 FROM geometry_columns
 WHERE f_table_schema = 'produccion'
   AND f_table_name IN ('redes_aysam_agua_20260907','redes_aysam_agua_20260527',
-                       'areas_dircas','redes','operadores','pozos_dircas')
+                       'areas_dircas','redes','pozos_dircas')
 ORDER BY f_table_name;
+
+-- === 1d. Tablas de nomenclatura disponibles ===
+--     (AGREGADA en la revision: las capas DIRCAS usan FK enteras y sin
+--      estas tablas no se puede resolver el nombre del operador)
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema = 'produccion'
+  AND table_name IN ('operador_redes_dircas','operador_redes',
+                     'diametro_redes_dircas','diametro_redes',
+                     'material_redes_dircas','material_redes','material_red',
+                     'estado_redes_dircas','estado_redes',
+                     'clasificacion_areas_dircas','jerarquia_areas_dircas',
+                     'tipo_area_dircas','servicio_redes_areas')
+ORDER BY table_name;
+
+-- === 1e. Columnas de las tablas de nomenclatura (para armar los JOIN) ===
+SELECT table_name, ordinal_position AS pos, column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'produccion'
+  AND table_name IN ('operador_redes_dircas','diametro_redes_dircas',
+                     'material_redes_dircas','estado_redes_dircas',
+                     'clasificacion_areas_dircas','jerarquia_areas_dircas',
+                     'tipo_area_dircas','servicio_redes_areas')
+  AND udt_name NOT IN ('geometry','geography')
+ORDER BY table_name, ordinal_position;
 
 -- ---------------------------------------------------------------------
 -- PASO 2 - Control de la parcela (esperado ~ 83.549 m2)
 -- ---------------------------------------------------------------------
--- === 2. Control de superficie de la parcela ===
+-- === 2a. Control de superficie de la parcela ===
+--     Corrida 2026-09-10: 83.550,09 m2 -- dif +1,09 m2 (0,0013 %). OK.
 WITH parcela AS (
   SELECT ST_Transform(
            ST_GeomFromText(
@@ -70,10 +142,28 @@ SELECT round(ST_Area(geom)::numeric, 2)      AS area_m2,
        round((ST_Area(geom) - 83549)::numeric, 2) AS dif_vs_esperado_m2
 FROM parcela;
 
+-- === 2b. Control de georreferenciacion (centroide en EPSG:4326) ===
+--     AGREGADA en la revision. Toda conclusion sobre distancias depende
+--     de que el poligono este bien ubicado: este control lo verifica de
+--     forma independiente. Corrida 2026-09-10: lon -68,962706 /
+--     lat -33,023739, que cae en Las Compuertas, Lujan de Cuyo. OK.
+WITH parcela AS (
+  SELECT ST_Transform(ST_GeomFromText(
+           'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
+           '2503621.25 6346661.76,2503668.68 6346675.42,'
+           '2503796.42 6346558.78,2503777.12 6346553.54,'
+           '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
+)
+SELECT ST_AsText(ST_Centroid(ST_Transform(geom, 4326)))              AS centroide_wgs84,
+       round(ST_X(ST_Centroid(ST_Transform(geom, 4326)))::numeric, 6) AS lon,
+       round(ST_Y(ST_Centroid(ST_Transform(geom, 4326)))::numeric, 6) AS lat
+FROM parcela;
+
 -- ---------------------------------------------------------------------
 -- PASO 3 - Red AySAM agua VIGENTE (20260907): 10 tramos mas cercanos <=1000 m
---   Los atributos se devuelven completos como JSON, asi la consulta no
---   depende de los nombres exactos de columnas.
+--   Se conserva to_jsonb(r) - 'geom' en la ultima columna para no perder
+--   ningun atributo, pero el diametro y el material ya se leen de los
+--   campos reales (a_diam_nom / a_material).
 -- ---------------------------------------------------------------------
 -- === 3a. AySAM 20260907 - 10 tramos mas proximos (radio 1000 m) ===
 WITH parcela AS (
@@ -89,18 +179,23 @@ WITH parcela AS (
   FROM produccion.redes_aysam_agua_20260907 r, parcela p
   WHERE ST_DWithin(r.geom, p.geom, 1000)
 )
-SELECT round(dist::numeric, 2) AS dist_m,
-       -- diametro: se prueban los nombres de campo habituales
-       NULLIF(regexp_replace(COALESCE(atrib->>'diametro', atrib->>'diam',
-              atrib->>'dn', atrib->>'diametro_mm', atrib->>'diametro_nominal',
-              atrib->>'dn_mm', ''), '[^0-9.]', '', 'g'), '')::numeric AS dn_mm,
-       COALESCE(atrib->>'material', atrib->>'mat', atrib->>'material_ca') AS material,
-       atrib AS atributos_completos
+SELECT round(dist::numeric, 2)              AS dist_m,
+       (atrib->>'a_diam_nom')::numeric      AS dn_mm,
+       atrib->>'a_material'                 AS material,
+       atrib->>'a_estado'                   AS estado,
+       btrim(atrib->>'funcion')             AS funcion,
+       (atrib->>'mslink')::numeric          AS mslink,
+       atrib                                AS atributos_completos
 FROM cerca
 ORDER BY dist
 LIMIT 10;
 
--- === 3b. AySAM 20260907 - tramo mas proximo con DN >= 90: linea de distancia ===
+-- === 3b. AySAM 20260907 - tramo mas proximo con DN >= 90 (SIN filtrar
+--         por funcion): linea de distancia ===
+--     ATENCION: esta consulta devuelve un ACUEDUCTO DE TRANSPORTE
+--     (DN 350, estado malo, a 20,45 m), que NO es conectable para un
+--     servicio domiciliario. Se conserva a titulo de control, pero para
+--     la factibilidad hay que usar la 3c.
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
@@ -112,28 +207,92 @@ WITH parcela AS (
          ST_Distance(r.geom, p.geom) AS dist, p.geom AS gp
   FROM produccion.redes_aysam_agua_20260907 r, parcela p
   WHERE ST_DWithin(r.geom, p.geom, 1000)
-), conx AS (
-  SELECT *, NULLIF(regexp_replace(COALESCE(atrib->>'diametro', atrib->>'diam',
-              atrib->>'dn', atrib->>'diametro_mm', atrib->>'diametro_nominal',
-              atrib->>'dn_mm', ''), '[^0-9.]', '', 'g'), '')::numeric AS dn
-  FROM cerca
 )
-SELECT round(dist::numeric, 2) AS dist_m,
-       dn AS dn_mm,
-       COALESCE(atrib->>'material', atrib->>'mat') AS material,
-       ST_AsText(ST_ShortestLine(gp, gr))            AS linea_distancia_22182,
-       ST_AsText(ST_ClosestPoint(gp, gr))            AS punto_parcela_mas_proximo,
-       ST_AsText(ST_ClosestPoint(gr, gp))            AS punto_red_mas_proximo,
+SELECT round(dist::numeric, 2)                        AS dist_m,
+       (atrib->>'a_diam_nom')::numeric                AS dn_mm,
+       atrib->>'a_material'                           AS material,
+       atrib->>'a_estado'                             AS estado,
+       btrim(atrib->>'funcion')                       AS funcion,
+       (atrib->>'mslink')::numeric                    AS mslink,
+       ST_AsText(ST_ShortestLine(gp, gr))             AS linea_distancia_22182,
+       ST_AsText(ST_ClosestPoint(gp, gr))             AS punto_parcela_mas_proximo,
+       ST_AsText(ST_ClosestPoint(gr, gp))             AS punto_red_mas_proximo,
        round(degrees(ST_Azimuth(ST_ClosestPoint(gp,gr), ST_ClosestPoint(gr,gp)))::numeric,1)
-                                                     AS azimut_grados,
-       atrib AS atributos_completos
-FROM conx
-WHERE dn >= 90
+                                                      AS azimut_grados,
+       atrib                                          AS atributos_completos
+FROM cerca
+WHERE (atrib->>'a_diam_nom')::numeric >= 90
 ORDER BY dist
 LIMIT 1;
 
+-- === 3c. AySAM 20260907 - tramo DISTRIBUIDOR mas proximo con DN >= 90 ===
+--     AGREGADA en la revision. ESTA es la consulta que corresponde para
+--     una factibilidad: el tramo efectivamente conectable.
+--     Corrida 2026-09-10: 67,36 m, DN 90, PVC K10, estado BUENO,
+--     azimut 180,4 grados (franco sur), mslink 1568 / 1569.
+WITH parcela AS (
+  SELECT ST_Transform(ST_GeomFromText(
+           'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
+           '2503621.25 6346661.76,2503668.68 6346675.42,'
+           '2503796.42 6346558.78,2503777.12 6346553.54,'
+           '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
+), cerca AS (
+  SELECT r.geom AS gr, (to_jsonb(r) - 'geom') AS atrib,
+         ST_Distance(r.geom, p.geom) AS dist, p.geom AS gp
+  FROM produccion.redes_aysam_agua_20260907 r, parcela p
+  WHERE ST_DWithin(r.geom, p.geom, 1000)
+)
+SELECT round(dist::numeric, 2)                        AS dist_m,
+       (atrib->>'a_diam_nom')::numeric                AS dn_mm,
+       atrib->>'a_material'                           AS material,
+       atrib->>'a_estado'                             AS estado,
+       (atrib->>'mslink')::numeric                    AS mslink,
+       round(degrees(ST_Azimuth(ST_ClosestPoint(gp,gr), ST_ClosestPoint(gr,gp)))::numeric,1)
+                                                      AS azimut_grados,
+       ST_AsText(ST_ClosestPoint(gr, gp))             AS punto_red_mas_proximo,
+       ST_AsText(ST_ShortestLine(gp, gr))             AS linea_distancia_22182
+FROM cerca
+WHERE (atrib->>'a_diam_nom')::numeric >= 90
+  AND btrim(atrib->>'funcion') ILIKE 'TRAMOS DISTRIBUCI%'
+ORDER BY dist
+LIMIT 5;
+
+-- === 3d. AySAM 20260907 - geometria de los distribuidores DN >= 90 <300 m ===
+--     AGREGADA en la revision. Permite ver si la red proxima es un
+--     troncal recto de calle o una red interna en zigzag, dato necesario
+--     para interpretar la distancia por traza vial que informa la
+--     Operadora frente a la distancia en linea recta.
+--     Corrida 2026-09-10: rumbos dispares (90 / 317 / 55 / 48 grados) y
+--     tramos de 4 a 105 m -> red interna de barrio, no troncal.
+WITH parcela AS (
+  SELECT ST_Transform(ST_GeomFromText(
+           'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
+           '2503621.25 6346661.76,2503668.68 6346675.42,'
+           '2503796.42 6346558.78,2503777.12 6346553.54,'
+           '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
+)
+SELECT r.mslink,
+       r.a_diam_nom                                   AS dn_mm,
+       r.a_material                                   AS material,
+       r.a_longitud                                   AS longitud_declarada_m,
+       btrim(r.funcion)                               AS funcion,
+       round(ST_Distance(r.geom, p.geom)::numeric, 2)  AS dist_m,
+       round(ST_Length(r.geom)::numeric, 2)            AS largo_calculado_m,
+       round(degrees(ST_Azimuth(ST_StartPoint(ST_GeometryN(r.geom,1)),
+                                ST_EndPoint(ST_GeometryN(r.geom,1))))::numeric,1)
+                                                       AS rumbo_tramo,
+       ST_AsText(ST_GeometryN(r.geom,1))               AS geometria
+FROM produccion.redes_aysam_agua_20260907 r, parcela p
+WHERE ST_DWithin(r.geom, p.geom, 300)
+  AND r.a_diam_nom >= 90
+  AND btrim(r.funcion) ILIKE 'TRAMOS DISTRIBUCI%'
+ORDER BY dist_m
+LIMIT 8;
+
 -- ---------------------------------------------------------------------
 -- PASO 4 - Red AySAM agua ANTERIOR (20260527): mismo analisis
+--   OJO: esta version NO tiene la columna a_longitud, y el campo funcion
+--   viene con relleno de espacios a la derecha (de ahi el btrim).
 -- ---------------------------------------------------------------------
 -- === 4a. AySAM 20260527 - 10 tramos mas proximos (radio 1000 m) ===
 WITH parcela AS (
@@ -148,17 +307,25 @@ WITH parcela AS (
   FROM produccion.redes_aysam_agua_20260527 r, parcela p
   WHERE ST_DWithin(r.geom, p.geom, 1000)
 )
-SELECT round(dist::numeric, 2) AS dist_m,
-       NULLIF(regexp_replace(COALESCE(atrib->>'diametro', atrib->>'diam',
-              atrib->>'dn', atrib->>'diametro_mm', atrib->>'diametro_nominal',
-              atrib->>'dn_mm', ''), '[^0-9.]', '', 'g'), '')::numeric AS dn_mm,
-       COALESCE(atrib->>'material', atrib->>'mat') AS material,
-       atrib AS atributos_completos
+SELECT round(dist::numeric, 2)              AS dist_m,
+       (atrib->>'a_diam_nom')::numeric      AS dn_mm,
+       atrib->>'a_material'                 AS material,
+       atrib->>'a_estado'                   AS estado,
+       btrim(atrib->>'funcion')             AS funcion,
+       (atrib->>'mslink')::numeric          AS mslink,
+       atrib                                AS atributos_completos
 FROM cerca
 ORDER BY dist
 LIMIT 10;
 
 -- === 4b. Comparacion entre versiones (minimos por DN, radio 1000 m) ===
+--     El identificador que se compara es mslink, NO ogc_fid ni fid:
+--     esas dos son claves subrogadas y se renumeran en cada recarga de
+--     la capa (el mismo tramo paso de ogc_fid 45769 a 32285).
+--     Se agrega la columna dist_min_dn90_distrib, que es la unica
+--     comparable con el dato que informa la Operadora.
+--     Corrida 2026-09-10: ambas versiones identicas (53 tramos,
+--     20,45 / 20,45 / 67,36 m, mslink 223774). Sin cambios relevantes.
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
@@ -167,42 +334,54 @@ WITH parcela AS (
            '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
 ), v_new AS (
   SELECT '20260907' AS version,
-         NULLIF(regexp_replace(COALESCE((to_jsonb(r)->>'diametro'),(to_jsonb(r)->>'diam'),
-                (to_jsonb(r)->>'dn'),(to_jsonb(r)->>'diametro_mm'),''),'[^0-9.]','','g'),'')::numeric AS dn,
-         ST_Distance(r.geom, p.geom) AS dist
+         r.a_diam_nom::numeric        AS dn,
+         r.mslink::numeric            AS mslink,
+         btrim(r.funcion)             AS funcion,
+         ST_Distance(r.geom, p.geom)  AS dist
   FROM produccion.redes_aysam_agua_20260907 r, parcela p
   WHERE ST_DWithin(r.geom, p.geom, 1000)
 ), v_old AS (
   SELECT '20260527' AS version,
-         NULLIF(regexp_replace(COALESCE((to_jsonb(r)->>'diametro'),(to_jsonb(r)->>'diam'),
-                (to_jsonb(r)->>'dn'),(to_jsonb(r)->>'diametro_mm'),''),'[^0-9.]','','g'),'')::numeric AS dn,
-         ST_Distance(r.geom, p.geom) AS dist
+         r.a_diam_nom::numeric        AS dn,
+         r.mslink::numeric            AS mslink,
+         btrim(r.funcion)             AS funcion,
+         ST_Distance(r.geom, p.geom)  AS dist
   FROM produccion.redes_aysam_agua_20260527 r, parcela p
   WHERE ST_DWithin(r.geom, p.geom, 1000)
 ), u AS (
   SELECT * FROM v_new UNION ALL SELECT * FROM v_old
 ), resumen AS (
   SELECT version,
-         count(*)                             AS tramos_en_1000m,
-         min(dist)                            AS dist_min,
-         min(dist) FILTER (WHERE dn >= 90)    AS dist_min_dn90
+         count(*)                          AS tramos_en_1000m,
+         min(dist)                         AS dist_min,
+         min(dist) FILTER (WHERE dn >= 90) AS dist_min_dn90,
+         min(dist) FILTER (WHERE dn >= 90
+                             AND funcion ILIKE 'TRAMOS DISTRIBUCI%')
+                                           AS dist_min_dn90_distrib
   FROM u GROUP BY version
 ), mas_cercano AS (
-  SELECT DISTINCT ON (version) version, dn, dist
+  SELECT DISTINCT ON (version) version, dn, mslink, dist
   FROM u ORDER BY version, dist
 )
 SELECT r.version,
        r.tramos_en_1000m,
-       round(r.dist_min::numeric, 2)      AS dist_min_m,
-       round(r.dist_min_dn90::numeric, 2) AS dist_min_dn90_m,
-       m.dn                               AS dn_del_mas_cercano
+       round(r.dist_min::numeric, 2)               AS dist_min_m,
+       round(r.dist_min_dn90::numeric, 2)          AS dist_min_dn90_m,
+       round(r.dist_min_dn90_distrib::numeric, 2)  AS dist_min_dn90_distrib_m,
+       m.dn                                        AS dn_del_mas_cercano,
+       m.mslink                                    AS mslink_del_mas_cercano
 FROM resumen r JOIN mas_cercano m USING (version)
 ORDER BY r.version DESC;
 
 -- ---------------------------------------------------------------------
 -- PASO 5 - areas_dircas en radio 3000 m + superposicion con la parcela
+--   Los atributos son claves foraneas enteras: se resuelven por JOIN
+--   contra las tablas de nomenclatura relevadas en 1d/1e.
 -- ---------------------------------------------------------------------
--- === 5. areas_dircas - poligonos en radio 3000 m ===
+-- === 5a. areas_dircas - poligonos en radio 3000 m ===
+--     Corrida 2026-09-10: superpone un solo poligono, gid 212, operador
+--     AYSAM SAPEM, 6.386,12 m2 (7,64 % de la parcela). Ninguna
+--     superposicion con operadores distintos de AySAM.
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
@@ -217,37 +396,122 @@ SELECT round(ST_Distance(a.geom, p.geom)::numeric, 2)                   AS dist_
        round((COALESCE(ST_Area(ST_Intersection(a.geom, p.geom)),0)
               / NULLIF(ST_Area(p.geom),0) * 100)::numeric, 2)            AS pct_de_la_parcela,
        round(ST_Area(a.geom)::numeric, 2)                                AS area_poligono_m2,
+       op.operador,
+       cl.clasificacion,
+       je.jerarquia,
+       ti.tipo,
+       se.servicio,
        (to_jsonb(a) - 'geom')                                            AS atributos_completos
-FROM produccion.areas_dircas a, parcela p
-WHERE ST_DWithin(a.geom, p.geom, 3000)
+FROM produccion.areas_dircas a
+JOIN parcela p ON ST_DWithin(a.geom, p.geom, 3000)
+LEFT JOIN produccion.operador_redes_dircas      op ON op.id_operador = a.id_op
+LEFT JOIN produccion.clasificacion_areas_dircas cl ON cl.id_clasi    = a.id_clasi
+LEFT JOIN produccion.jerarquia_areas_dircas     je ON je.id_jer      = a.id_jer
+LEFT JOIN produccion.tipo_area_dircas           ti ON ti.id_tipo     = a.id_tipo
+LEFT JOIN produccion.servicio_redes_areas       se ON se.id_servicio = a.id_servicio
 ORDER BY dist_m, sup_superpuesta_m2 DESC;
 
--- ---------------------------------------------------------------------
--- PASO 6 - redes de operadores NO AySAM en radio 1500 m
---   6a: contenido de 'operadores' (para identificar la FK del join)
---   6b: redes proximas con todos sus atributos
--- ---------------------------------------------------------------------
--- === 6a. Tabla operadores (listado completo) ===
-SELECT (to_jsonb(o) - 'geom') AS operador
-FROM produccion.operadores o
-ORDER BY 1;
-
--- === 6b. redes - tramos en radio 1500 m (excluye AySAM por texto) ===
+-- === 5b. Extension de la interseccion con el area que superpone ===
+--     AGREGADA en la revision. Un porcentaje de superposicion no dice si
+--     se trata de una inclusion sustantiva o de una franja de
+--     digitalizacion sobre el limite. Esta consulta lo caracteriza.
+--     Corrida 2026-09-10: la interseccion se extiende 477,15 m E-O sobre
+--     los 725,39 m de la parcela pero suma 6.386,12 m2 -> ancho medio de
+--     unos 13,4 m: franja angosta sobre el borde norte/noroeste.
+--     Ajustar el gid del area segun lo que devuelva la 5a.
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
            '2503621.25 6346661.76,2503668.68 6346675.42,'
            '2503796.42 6346558.78,2503777.12 6346553.54,'
            '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
-), cerca AS (
-  SELECT (to_jsonb(r) - 'geom') AS atrib,
-         ST_Distance(r.geom, p.geom) AS dist
-  FROM produccion.redes r, parcela p
-  WHERE ST_DWithin(r.geom, p.geom, 1500)
+), inter AS (
+  SELECT a.gid, ST_Intersection(a.geom, p.geom) AS gi, p.geom AS gp
+  FROM produccion.areas_dircas a, parcela p
+  WHERE ST_Intersects(a.geom, p.geom)
 )
-SELECT round(dist::numeric, 2) AS dist_m,
-       atrib AS atributos_completos
-FROM cerca
-WHERE atrib::text !~* 'aysam|obras\s*sanitarias'
-ORDER BY dist
+SELECT gid,
+       round(ST_Area(gi)::numeric, 2)   AS sup_intersec_m2,
+       round(ST_XMin(gi)::numeric, 2)   AS x_min_int,
+       round(ST_XMax(gi)::numeric, 2)   AS x_max_int,
+       round(ST_XMin(gp)::numeric, 2)   AS x_min_parcela,
+       round(ST_XMax(gp)::numeric, 2)   AS x_max_parcela,
+       round(ST_YMin(gi)::numeric, 2)   AS y_min_int,
+       round(ST_YMax(gi)::numeric, 2)   AS y_max_int,
+       round((ST_XMax(gi) - ST_XMin(gi))::numeric, 2)                       AS ancho_e_o_int_m,
+       round((ST_Area(gi) / NULLIF(ST_XMax(gi) - ST_XMin(gi),0))::numeric,2) AS ancho_medio_n_s_m
+FROM inter
+ORDER BY sup_intersec_m2 DESC;
+
+-- ---------------------------------------------------------------------
+-- PASO 6 - redes de operadores DIRCAS en radio 1500 m
+--   6a: nomenclatura de operadores (para identificar la FK del join)
+--   6b: redes proximas, con operador / diametro / material resueltos
+--   6c: control con radio ampliado a 3000 m
+--
+--   produccion.redes NO tiene el nombre del operador como texto, sino
+--   la FK entera id_op. El filtro por texto de la version original
+--   (atrib::text !~* 'aysam') no excluia nada: la capa redes es la de
+--   operadores DIRCAS y no contiene tramos de AySAM, que viven en las
+--   capas redes_aysam_*.
+-- ---------------------------------------------------------------------
+-- === 6a. Nomenclatura de operadores (Lujan de Cuyo + AySAM) ===
+--     La tabla tiene 163 filas: se acota a n_depto = '06' (Lujan de
+--     Cuyo) mas AySAM, que son los relevantes para este expediente.
+--     Quitar el WHERE para el listado completo.
+SELECT id_operador, operador, op, n_depto, operador_id
+FROM produccion.operador_redes_dircas
+WHERE n_depto = '06' OR operador ILIKE '%aysam%'
+ORDER BY operador;
+
+-- === 6b. redes - tramos de operadores DIRCAS en radio 1500 m ===
+--     Corrida 2026-09-10: 0 filas. Ningun operador DIRCAS con red en
+--     1.500 m del inmueble.
+WITH parcela AS (
+  SELECT ST_Transform(ST_GeomFromText(
+           'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
+           '2503621.25 6346661.76,2503668.68 6346675.42,'
+           '2503796.42 6346558.78,2503777.12 6346553.54,'
+           '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
+)
+SELECT round(ST_Distance(r.geom, p.geom)::numeric, 2) AS dist_m,
+       op.operador,
+       di.diametro   AS dn_mm,
+       ma.material,
+       es.estado,
+       se.servicio,
+       r.long_m,
+       r.n_depto,
+       (to_jsonb(r) - 'geom')                         AS atributos_completos
+FROM produccion.redes r
+JOIN parcela p ON ST_DWithin(r.geom, p.geom, 1500)
+LEFT JOIN produccion.operador_redes_dircas op ON op.id_operador = r.id_op
+LEFT JOIN produccion.diametro_redes_dircas di ON di.id_diametro = r.id_diam
+LEFT JOIN produccion.material_redes_dircas ma ON ma.id_material = r.id_mat
+LEFT JOIN produccion.estado_redes_dircas   es ON es.id_estado   = r.id_estado
+LEFT JOIN produccion.servicio_redes_areas  se ON se.id_servicio = r.id_servicio
+ORDER BY dist_m
 LIMIT 50;
+
+-- === 6c. redes - resumen por operador con radio ampliado a 3000 m ===
+--     AGREGADA en la revision. Si la 6b devuelve 0 filas hay que poder
+--     afirmar cual es el operador DIRCAS mas proximo y a que distancia,
+--     para sostener la conclusion del informe.
+--     Corrida 2026-09-10: unico operador MUNICIPALIDAD DE LUJAN AGUA,
+--     9 tramos, minimo 2.853,31 m.
+WITH parcela AS (
+  SELECT ST_Transform(ST_GeomFromText(
+           'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
+           '2503621.25 6346661.76,2503668.68 6346675.42,'
+           '2503796.42 6346558.78,2503777.12 6346553.54,'
+           '2503674.45 6346506.70,2503071.03 6346510.82))', 22172), 22182) AS geom
+)
+SELECT COALESCE(op.operador, '(sin operador asignado)')      AS operador,
+       count(*)                                              AS tramos,
+       round(min(ST_Distance(r.geom, p.geom))::numeric, 2)    AS dist_min_m,
+       round(max(ST_Distance(r.geom, p.geom))::numeric, 2)    AS dist_max_m
+FROM produccion.redes r
+JOIN parcela p ON ST_DWithin(r.geom, p.geom, 3000)
+LEFT JOIN produccion.operador_redes_dircas op ON op.id_operador = r.id_op
+GROUP BY 1
+ORDER BY dist_min_m;

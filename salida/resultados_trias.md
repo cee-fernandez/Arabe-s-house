@@ -220,6 +220,15 @@ nombres exactos de las columnas, que se relevan en el Paso 1.
 > `JOIN` contra `operador_redes_dircas` / `diametro_redes_dircas` /
 > `material_redes_dircas` / `estado_redes_dircas` / `servicio_redes_areas` para
 > `redes` y `areas_dircas`. Ver el encabezado de `resultados_crudos.txt`.
+>
+> **`consultas_trias.sql` ya está corregido** con los campos reales y verificado
+> contra la base: incorpora las consultas agregadas (2b, 3c, 3d, 5b, 6c) y deja
+> anotado el valor obtenido en la corrida del 2026-09-10 junto a cada una, de
+> modo que sirva como línea de base para futuros cotejos. Para el filtro por
+> función se usa `btrim(funcion) ILIKE 'TRAMOS DISTRIBUCI%'` en lugar del literal
+> acentuado, lo que mantiene el archivo en ASCII puro y lo hace independiente de
+> la codificación del cliente; se comprobó que ese patrón captura los 46.438
+> tramos de distribución de la capa y ninguno de las otras cinco funciones.
 
 ```sql
 -- Definición de la parcela, común a todas las consultas
