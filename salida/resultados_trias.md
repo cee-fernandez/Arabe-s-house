@@ -205,14 +205,28 @@ ogr2ogr -f GPKG -update -append ./salida/trias.gpkg \
    análisis, requiere `ST_Transform(geom, 22182)` para operar con el resto de las
    capas.
 
-4. **Restricción de red.** El entorno de proceso no alcanza el servidor de base
-   de datos (dirección de red privada, fuera del alcance del entorno). Las consultas de §D
-   deben ejecutarse desde la red interna de DIRCAS, mediante el Administrador de
-   Bases de Datos de QGIS o `psql`:
+4. **Dónde ejecutar.** Las direcciones del servidor PostGIS y del MariaDB son
+   privadas (RFC1918): se alcanzan únicamente desde la red del organismo. El
+   entorno donde se preparó este análisis es un host remoto, fuera de esa red,
+   por lo que las consultas de §D deben correrse desde un equipo en Irrigación,
+   por cualquiera de estas tres vías —el script es SQL puro, sin meta-comandos
+   de cliente, y sirve para las tres—:
 
    ```bash
-   psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
-        -f salida/consultas_trias.sql > salida/resultados_crudos.txt
+   # a) psql
+   export PGHOST=... PGPORT=5432 PGDATABASE=... PGUSER=...
+   psql -P pager=off -f salida/consultas_trias.sql > salida/resultados_crudos.txt
+   ```
+
+   b) **QGIS** → Administrador de Bases de Datos → Ventana SQL, ejecutando cada
+   sentencia por separado.
+
+   c) **Servidor MCP `dircas_postgis`** desde Claude Code en el equipo local, una
+   sentencia por llamada. Todos los prefijos empleados (`SET`, `WITH`, `SELECT`)
+   pasan la lista blanca del servidor. Verificar alcance previo con:
+
+   ```bash
+   python -c "import socket; s=socket.create_connection((HOST,5432),5); print('llego'); s.close()"
    ```
 
 5. **Sólo lectura.** El script no ejecuta `INSERT`, `UPDATE`, `DELETE`, `CREATE` ni

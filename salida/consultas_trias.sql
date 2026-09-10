@@ -1,22 +1,29 @@
 -- =====================================================================
 -- EX-2026-06193195 -- Factibilidad de agua potable
 -- Inmueble en Las Compuertas, Lujan de Cuyo -- Analisis espacial DIRCAS
--- Base: PostGIS institucional (definir via PGHOST/PGDATABASE/PGUSER)  esquema: produccion
--- SOLO LECTURA. Sin DDL ni DML. Todo resuelto con CTE.
--- Ejecutar:  psql -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" \
---                 -f consultas_trias.sql > resultados_crudos.txt
+-- Esquema: produccion.  SOLO LECTURA: sin DDL ni DML, parcela via CTE.
+--
+-- SQL puro, sin meta-comandos de psql: sirve por los tres caminos.
+--   a) psql   (desde la LAN de Irrigacion)
+--        psql -P pager=off -f consultas_trias.sql > resultados_crudos.txt
+--        con PGHOST / PGPORT / PGDATABASE / PGUSER / PGPASSWORD exportadas
+--   b) QGIS -> Administrador de Bases de Datos -> Ventana SQL
+--        pegar y ejecutar cada sentencia por separado
+--   c) servidor MCP dircas_postgis, una sentencia por llamada
+--        todos los prefijos usados (SET / WITH / SELECT) pasan la lista blanca
+--
+-- Nota para el camino (c): el MCP ya abre la conexion con
+-- set_session(readonly=True), por lo que el SET de la linea siguiente es
+-- redundante ahi -- y ademas puede no persistir entre llamadas si el
+-- servidor no reutiliza la conexion. Es necesario en (a) y (b).
 -- =====================================================================
 
 SET default_transaction_read_only = on;
 
-\pset pager off
-\pset border 2
-\timing off
-
 -- ---------------------------------------------------------------------
 -- PASO 1 - Estructura de las tablas (sin columnas de geometria)
 -- ---------------------------------------------------------------------
-\echo '=== 1a. Tablas presentes en el esquema produccion ==='
+-- === 1a. Tablas presentes en el esquema produccion ===
 SELECT table_name
 FROM information_schema.tables
 WHERE table_schema = 'produccion'
@@ -24,7 +31,7 @@ WHERE table_schema = 'produccion'
                      'areas_dircas','redes','operadores')
 ORDER BY table_name;
 
-\echo '=== 1b. Columnas (excluidas geometry/geography) ==='
+-- === 1b. Columnas (excluidas geometry/geography) ===
 SELECT table_name, ordinal_position AS pos, column_name, data_type
 FROM information_schema.columns
 WHERE table_schema = 'produccion'
@@ -33,7 +40,7 @@ WHERE table_schema = 'produccion'
   AND udt_name NOT IN ('geometry','geography')
 ORDER BY table_name, ordinal_position;
 
-\echo '=== 1c. Columnas de geometria declaradas (nombre y SRID reales) ==='
+-- === 1c. Columnas de geometria declaradas (nombre y SRID reales) ===
 SELECT f_table_name, f_geometry_column, srid, type
 FROM geometry_columns
 WHERE f_table_schema = 'produccion'
@@ -44,7 +51,7 @@ ORDER BY f_table_name;
 -- ---------------------------------------------------------------------
 -- PASO 2 - Control de la parcela (esperado ~ 83.549 m2)
 -- ---------------------------------------------------------------------
-\echo '=== 2. Control de superficie de la parcela ==='
+-- === 2. Control de superficie de la parcela ===
 WITH parcela AS (
   SELECT ST_Transform(
            ST_GeomFromText(
@@ -68,7 +75,7 @@ FROM parcela;
 --   Los atributos se devuelven completos como JSON, asi la consulta no
 --   depende de los nombres exactos de columnas.
 -- ---------------------------------------------------------------------
-\echo '=== 3a. AySAM 20260907 - 10 tramos mas proximos (radio 1000 m) ==='
+-- === 3a. AySAM 20260907 - 10 tramos mas proximos (radio 1000 m) ===
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
@@ -93,7 +100,7 @@ FROM cerca
 ORDER BY dist
 LIMIT 10;
 
-\echo '=== 3b. AySAM 20260907 - tramo mas proximo con DN >= 90: linea de distancia ==='
+-- === 3b. AySAM 20260907 - tramo mas proximo con DN >= 90: linea de distancia ===
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
@@ -128,7 +135,7 @@ LIMIT 1;
 -- ---------------------------------------------------------------------
 -- PASO 4 - Red AySAM agua ANTERIOR (20260527): mismo analisis
 -- ---------------------------------------------------------------------
-\echo '=== 4a. AySAM 20260527 - 10 tramos mas proximos (radio 1000 m) ==='
+-- === 4a. AySAM 20260527 - 10 tramos mas proximos (radio 1000 m) ===
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
@@ -151,7 +158,7 @@ FROM cerca
 ORDER BY dist
 LIMIT 10;
 
-\echo '=== 4b. Comparacion entre versiones (minimos por DN, radio 1000 m) ==='
+-- === 4b. Comparacion entre versiones (minimos por DN, radio 1000 m) ===
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
@@ -195,7 +202,7 @@ ORDER BY r.version DESC;
 -- ---------------------------------------------------------------------
 -- PASO 5 - areas_dircas en radio 3000 m + superposicion con la parcela
 -- ---------------------------------------------------------------------
-\echo '=== 5. areas_dircas - poligonos en radio 3000 m ==='
+-- === 5. areas_dircas - poligonos en radio 3000 m ===
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
@@ -220,12 +227,12 @@ ORDER BY dist_m, sup_superpuesta_m2 DESC;
 --   6a: contenido de 'operadores' (para identificar la FK del join)
 --   6b: redes proximas con todos sus atributos
 -- ---------------------------------------------------------------------
-\echo '=== 6a. Tabla operadores (listado completo) ==='
+-- === 6a. Tabla operadores (listado completo) ===
 SELECT (to_jsonb(o) - 'geom') AS operador
 FROM produccion.operadores o
 ORDER BY 1;
 
-\echo '=== 6b. redes - tramos en radio 1500 m (excluye AySAM por texto) ==='
+-- === 6b. redes - tramos en radio 1500 m (excluye AySAM por texto) ===
 WITH parcela AS (
   SELECT ST_Transform(ST_GeomFromText(
            'POLYGON((2503071.03 6346510.82,2503536.52 6346720.59,'
